@@ -1,0 +1,7 @@
+#!/command/execlineb -P
+
+s6-envdir ../opnsense-log/env
+importas -i logdir LOGDIR
+if { mkdir -p $logdir }
+if { chown nobody:nogroup $logdir }
+chmod 02755 $logdir

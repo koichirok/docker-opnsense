@@ -1,0 +1,53 @@
+#!/command/execlineb -P
+
+with-contenv
+s6-envdir ./env
+multisubstitute {
+    importas -D 2048 ram_size RAM_SIZE
+    importas -i image_path IMAGE_PATH
+    importas -i pidfile PIDFILE
+    importas -i serial_dev_id SERIAL_DEV_LABEL
+}
+
+backtick -E image_format {
+    ifelse { eltest $image_path =~ \.qcow2$ }
+    { echo qcow2 }
+    echo raw
+}
+foreground {
+    backtick -E piddir { dirname $pidfile }
+    if -n { test -d $piddir }
+    mkdir -p $piddir
+}
+
+fdmove -c 2 1
+
+qemu-system-x86_64
+-nodefaults -enable-kvm
+-pidfile $pidfile
+-cpu host,kvm=on,l3-cache=on,migratable=no
+-smp 1,sockets=1,dies=1,cores=1,threads=1
+-m $ram_size
+# Note: q35 chipset is supported by OPNsense >= 21.x
+-machine type=q35,graphics=off,vmport=off,dump-guest-core=off,hpet=off,accel=kvm
+
+# -global kvm-pit.lost_tick_policy=discard
+# -device virtio-balloon-pci,id=balloon0,bus=pcie.0,addr=0x4
+# -object rng-random,id=objrng0,filename=/dev/urandom
+# -device virtio-rng-pci,rng=objrng0,id=rng0,bus=pcie.0,addr=0x1c
+# -name qemu,process=qemu,debug-threads=on
+
+# Allow to connect to the serial console via pty device
+-nographic
+-chardev pty,id=${serial_dev_id},logfile=/dev/stdout
+-serial chardev:${serial_dev_id}
+-monitor telnet:localhost:7100,server,nowait,nodelay
+
+# Network
+-netdev tap,id=nd0,ifname=tap0,script=no,downscript=no
+-device virtio-net-pci,netdev=nd0
+-netdev user,id=nd1
+-device virtio-net-pci,netdev=nd1
+
+# Disk
+-drive file=${image_path},if=virtio,format=${image_format},cache=none,aio=native,discard=on,detect-zeroes=on

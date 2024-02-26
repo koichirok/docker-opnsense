@@ -1,0 +1,71 @@
+#!/command/execlineb -P
+
+# Note: this script does not support the case where the log file is rotated
+
+s6-envdir ../opnsense/env
+s6-envdir ../opnsense-log/env
+
+multisubstitute {
+    importas -i logdir LOGDIR
+    importas -i serial_dev_label SERIAL_DEV_LABEL
+}
+define logfile ${logdir}/current
+
+# get boot time from /proc/1 directory
+# (most reliable way to get the boot time)
+backtick -E boot_time {
+    pipeline { stat --printf "%W\\n\\n%X\\n%Y\\n%Z\\n" /proc/1/stat }
+    pipeline { grep -v "^0\\{0,1\\}$" }
+    pipeline { sort -n }
+    head -n 1
+}
+
+# Wait for opnsense to be ready
+loopwhilex -n
+foreground { sleep 1 }
+if { test -e "${logfile}" }
+if { test -e "${logdir}/lock" }
+backtick LOG {
+    pipeline { grep "  Root file system: /dev/ufs/OPNsense_Nano" $logfile }
+    tail -n 1
+}
+importas log LOG
+if { test -n $log }
+backtick -E log_time { sh -c "date -d \"${LOG%%  *}\" +%s" }
+# Skip old log entries
+if { test ${log_time} -ge ${boot_time} }
+backtick -E opnsense_banner_msg {
+    pipeline { grep -A 11 -F $log $logfile }
+    sed -n -e "3,\$ { s/^[-0-9]* [0-9:.]*  //p }"
+}
+backtick -E opnsense_banner_line_count {
+    pipeline { echo $opnsense_banner_msg }
+    wc -l
+}
+if { test $opnsense_banner_line_count -ge 9 }
+foreground {
+    rm -f
+    ../opnsense/env/HOSTNAME
+    ../opnsense/env/LAN_IPV4_ADDRESS
+    ../opnsense/env/LAN_IPV4_NETMASK
+    ../opnsense/env/BANNER_MESSAGE
+}
+foreground {
+    redirfd -w 1 ../opnsense/env/BANNER_MESSAGE
+    echo $opnsense_banner_msg
+}
+pipeline { echo $opnsense_banner_msg }
+forstdin -E line
+case -N "$line"
+{
+    "^[*]{3} ([^ ]*): .*" {
+        elgetpositionals
+        redirfd -w 1 ../opnsense/env/HOSTNAME
+        echo $1
+    }
+    "^ LAN.*v4: (.*)/(.*)" {
+        elgetpositionals
+        if { redirfd -w 1 ../opnsense/env/LAN_IPV4_ADDRESS echo $1 }
+        redirfd -w 1 ../opnsense/env/LAN_IPV4_NETMASK echo $2
+    }
+}

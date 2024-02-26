@@ -1,0 +1,11 @@
+#!/command/execlineb -P
+
+define dev_path /dev/net/tun
+define dev_major 10
+define dev_minor 200
+
+ifelse { test -e $dev_path }
+{ echo "dev-net-tun-create: Device $dev_path already exists" }
+
+if { mkdir -p /dev/net }
+mknod $dev_path c $dev_major $dev_minor

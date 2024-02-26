@@ -1,0 +1,11 @@
+#!/command/execlineb -P
+
+s6-envdir ../opnsense/env
+multisubstitute {
+    importas -i key_file API_KEY_FILE
+    importas -i opnsense_address LAN_IPV4_ADDRESS
+}
+
+ifelse { test -e $key_file }
+{ echo "opnsense-generate-api-key: API key file already exists at ${key_file}" }
+/scripts/generate-opnsense-api-key.pl -H $opnsense_address
