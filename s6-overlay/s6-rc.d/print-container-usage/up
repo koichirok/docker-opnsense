@@ -7,8 +7,6 @@ multisubstitute {
     importas -i api_key_file API_KEY_FILE
 }
 
-foreground { env }
-
 echo "\nOPNsense is now operational with the following configuration:\n"
 
 $banner_message
