@@ -3,7 +3,7 @@
 s6-envdir ./env
 importas -i pidfile PIDFILE
 
-if -n { test -e $pidfile }
+ifelse -n { test -e $pidfile }
 { echo "opnsense: PID file not found. Do nothing." }
 
 backtick -E pid { cat $pidfile }
