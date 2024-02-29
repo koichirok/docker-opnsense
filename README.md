@@ -7,6 +7,7 @@ It's intended for testing purposes and not designed for use in a production envi
 
 To run this image, following options are required:
 
+* `--init` to prevent zombie processes
 * `--cap_add NET_ADMIN`
 * one of the following:
     * `--device /dev/kvm`
@@ -37,6 +38,7 @@ services:
     #   - 'c 10:232 rwm'
     cap_add:
       - NET_ADMIN
+    init: true
     ports:
       - 10443:443
     stop_grace_period: 2m

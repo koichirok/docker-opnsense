@@ -1,12 +1,3 @@
-FROM alpine:3 as s6
-ARG S6_OVERLAY_VERSION=3.1.6.2
-
-ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
-ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp
-RUN mkdir -p /s6/root \
-    && tar -C /s6/root -Jxpf /tmp/s6-overlay-noarch.tar.xz \
-    && tar -C /s6/root -Jxpf /tmp/s6-overlay-x86_64.tar.xz
-
 FROM debian:trixie-slim as opnsense
 
 ARG DEBCONF_NOWARNINGS="yes"
@@ -75,7 +66,7 @@ RUN apt-get update \
     && echo "Minimize qcow2 image..." \
     && qemu-img convert -c -O qcow2 middle.qcow2 "${image%.img}.qcow2" \
     && rm -f "${image}" \
-    && apt-get --purge autoremove -y curl bzip2 netselect qemu-utils \
+    && apt-get --purge autoremove -y curl bzip2 netselect \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -92,18 +83,16 @@ ENV DEBIAN_FRONTEND=${DEBIAN_FRONTEND}
 ENV DEBCONF_NONINTERACTIVE_SEEN=${DEBCONF_NONINTERACTIVE_SEEN}
 ENV IMAGE_PATH=${OPNSENSE_IMAGE_DIR}/OPNsense-${OPNSENSE_VERSION}-nano-amd64.qcow2
 
-COPY --from=s6 /s6/root /
 COPY --from=opnsense /OPNsense-${OPNSENSE_VERSION}-nano-amd64.qcow2 "${IMAGE_PATH}"
 
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get --no-install-recommends -y install \
-        apt-utils \
-        ca-certificates \
         iproute2 \
         iptables \
         libwww-mechanize-perl \
         libnet-netmask-perl \
+        monit \
         netcat-openbsd \
         picocom \
         procps \
@@ -114,12 +103,12 @@ RUN apt-get update \
 
 FROM base
 
-ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=300000
 ENV RAM_SIZE="2048"
 
-COPY s6-overlay /etc/s6-overlay
-COPY scripts /scripts
+COPY --chmod=0600 src/monitrc /etc/monit/conf.d/
+COPY --chmod=0755 src/entrypoint.sh /
+COPY src/qemu-opnsense /opt/qemu-opnsense
 
 # EXPOSE 22/tcp 53 443/tcp
 
-ENTRYPOINT [ "/init" ]
+ENTRYPOINT [ "/entrypoint.sh" ]

@@ -1,3 +1,0 @@
-if { ip link add dev br-opnsense-lan type bridge }
-if { ip tuntap add dev tap0 mode tap }
-ip link set tap0 master br-opnsense-lan

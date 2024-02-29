@@ -1,5 +1,0 @@
-#!/command/execlineb -P
-
-s6-envdir ./env
-importas -i logdir LOGDIR
-logutil-service $logdir
