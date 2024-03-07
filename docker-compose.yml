@@ -1,15 +1,16 @@
 version: "3"
 services:
   opnsense:
-    image: koichirok/docker-opnsense:24.1
-    devices:
-      - /dev/kvm
+    image: koichirok/docker-opnsense:24.1.3
+    #devices:
+    #  - /dev/kvm
     #  - /dev/net/tun
-    # device_cgroup_rules:
-    #   - 'c 10:232 rwm'
+    device_cgroup_rules:
+      - 'c 10:232 rwm'
     cap_add:
       - NET_ADMIN
+    #init: true
     ports:
       - 10443:443
-    stop_grace_period: 2m
+    stop_grace_period: 3m
     restart: on-failure

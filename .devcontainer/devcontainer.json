@@ -19,6 +19,8 @@
 
 	// Use 'postCreateCommand' to run commands after the container is created.
 	// "postCreateCommand": "docker --version",
+	//"privileged": true,
+	"capAdd": ["NET_ADMIN"],
 
 	// Configure tool-specific properties.
 	"customizations": {
@@ -27,7 +29,8 @@
 				"ms-azuretools.vscode-docker",
 				"exiasr.hadolint",
 				"timonwong.shellcheck",
-				"bscan.perlnavigator"
+				"bscan.perlnavigator",
+				"ms-vscode.makefile-tools"
 			]
 		}
 	}

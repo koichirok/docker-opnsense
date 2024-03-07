@@ -11,8 +11,9 @@ my %opts = (
     u => "root",                            # OPNsense username
     p => "opnsense",                        # OPNsense password
     f => "/root/.opnsense-api-key.json",    # Output file
+    q => 0,                                 # Quiet mode
 );
-getopts('H:u:p:f:', \%opts);
+getopts('H:u:p:f:q', \%opts);
 
 sub trim {
     my $str = shift;
@@ -100,7 +101,7 @@ sub generate_api_key {
     }
     $mech->post($mech->uri(), {act => 'newApiKey', userid => $userid});
     $mech->save_content($opts{f});
-    print "API key saved to $opts{f}\n";
+    print "API key saved to $opts{f}\n" unless $opts{q};
 }
 
 sub main {
