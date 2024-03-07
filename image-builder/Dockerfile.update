@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1-labs
+ARG OPNSENSE_SERIES
+
+FROM koichirok/docker-opnsense:${OPNSENSE_SERIES}-image as base-image
+
+FROM koichirok/docker-opnsense:image-builder as builder
+
+ARG OPNSENSE_VERSION
+
+ENV IMAGE_PATH="/OPNsense-${OPNSENSE_VERSION}-nano-amd64.qcow2"
+
+COPY --from=base-image /OPNsense-*-nano-amd64.qcow2 "${IMAGE_PATH}"
+
+SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
+WORKDIR /tmp
+
+# COPY ./src/image-builder /builder
+
+# create sparse qcow2 image at /
+RUN --security=insecure \
+    qemu-system-x86_64 \
+        -nodefaults -enable-kvm -daemonize -m 2048 -nographic \
+        -chardev "pty,id=ptyS0,logfile=console.log" -serial "chardev:ptyS0" \
+        -netdev "user,id=nd0" -device "virtio-net-pci,netdev=nd0" \
+        -netdev "user,id=nd1" -device "virtio-net-pci,netdev=nd1" \
+        -drive "file=${IMAGE_PATH},format=qcow2,cache=none" \
+        2>&1 | tee qemu.log \
+    && serial=$(grep ptyS0 qemu.log | grep -o '/dev/pts/[0-9]*') \
+    && echo -n "Perfoming update..." \
+    && /builder/perform-update.exp "$serial" "${OPNSENSE_VERSION}" \
+    && version=$(grep -A 1 '# opnsense-version' console.log | tail -n 1) \
+    && echo "done. Image updated to version: ${version}" \
+    && echo -n "Generating sparse qcow2 image..." \
+    && qemu-img convert -c -O qcow2 "${IMAGE_PATH}" sparse.qcow2 \
+    && mv sparse.qcow2 "${IMAGE_PATH}" \
+    && echo "done" \
+    && rm ./*.log
+
+FROM scratch
+
+ARG OPNSENSE_VERSION
+
+COPY --from=builder /OPNsense-${OPNSENSE_VERSION}-nano-amd64.qcow2 /

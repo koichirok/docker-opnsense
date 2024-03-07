@@ -1,0 +1,48 @@
+# shellcheck shell=bash
+
+# Ensure required directories exist
+ensure_directories() {
+    mkdir -p /dev/net
+    mkdir -p "${OPNSENSE_LOG_DIR}"
+    mkdir -p "${OPNSENSE_RUN_STATE_DIR}"
+}
+
+# Ensure required devices exist
+ensure_devices() {
+    # Create kvm as needed
+    if [ ! -e /dev/kvm ]; then
+        mknod /dev/kvm c 10 232
+    fi
+    # Create tap0 as needed
+    if [ ! -e /dev/net/tun ]; then
+        mkdir -p /dev/net
+        mknod /dev/net/tun c 10 200
+    fi
+}
+
+# Ensure required network interfaces exist
+ensure_network_interfaces() {
+    local varname
+    for varname in ${!OPNSENSE_*}
+    do
+        case "${varname}" in
+            *_BRIDGE_NAME)
+                if ! ip link show "${!varname}" > /dev/null 2>&1; then
+                    ip link add "${!varname}" type bridge
+                fi
+                ;;
+            OPNSENSE_LAN_DEVICE_NAME|OPNSENSE_WAN_DEVICE_NAME)
+                if ! ip link show "${!varname}" > /dev/null 2>&1; then
+                    ip tuntap add "${!varname}" mode tap
+                fi
+                ;;
+        esac
+    done
+
+    # if [ -z "$(ip link show "${OPNSENSE_LAN_DEVICE_NAME}" master "${OPNSENSE_LAN_BRIDGE_NAME}")" ]; then
+    #     ip link set "${OPNSENSE_LAN_DEVICE_NAME}" master "${OPNSENSE_LAN_BRIDGE_NAME}"
+    # fi
+
+    ip link set "${OPNSENSE_LAN_DEVICE_NAME}" up
+    ip link set "${OPNSENSE_LAN_BRIDGE_NAME}" up
+}

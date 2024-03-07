@@ -1,0 +1,172 @@
+# shellcheck shell=bash
+
+OPNSENSE_PIDFILE="${OPNSENSE_RUN_STATE_DIR}/qemu.pid"
+OPNSENSE_CONSOLE_LOG_FILE="${OPNSENSE_LOG_DIR}/console.log"
+OPNSENSE_CONTROL_LOG_FILE="${OPNSENSE_LOG_DIR}/control.log"
+OPNSENSE_CURRENT_NETWORK_SETTINGS="${OPNSENSE_RUN_STATE_DIR}/network.env"
+OPNSENSE_QEMU_MONITOR="telnet:localhost:7100,server,nowait,nodelay"
+
+fatal () {
+    echo "FATAL: $*" >&2
+    exit 1
+}
+
+setup_logging() {
+    if [ -t 0 ]; then
+        # This shell has a tty
+        exec > >(tee -i "${OPNSENSE_CONTROL_LOG_FILE}")
+    else
+        # This shell is not interactive
+        exec > "${OPNSENSE_CONTROL_LOG_FILE}"
+    fi
+    exec 2>&1
+}
+
+start_opnsense() {
+    local image_format
+    local -a qemu_args
+    case "${OPNSENSE_IMAGE_PATH}" in
+        *.qcow2) image_format=qcow2;;
+        *)       image_format=raw;;
+    esac
+    qemu_args+=(
+        -nodefaults -enable-kvm
+        -pidfile "${OPNSENSE_PIDFILE}"
+        -daemonize
+        -cpu "host,kvm=on,l3-cache=on,migratable=no"
+        -smp "1,sockets=1,dies=1,cores=1,threads=1"
+        -m "${OPNSENSE_RAM_SIZE}"
+        # Note: q35 chipset is supported by OPNsense >= 21.x
+        -machine "type=q35,graphics=off,vmport=off,dump-guest-core=off,hpet=off,accel=kvm"
+
+        # Allow to connect to the serial console via pty device
+        -nographic
+        -chardev "pty,id=${OPNSENSE_QEMU_SERIAL_DEV_NAME},logfile=${OPNSENSE_CONSOLE_LOG_FILE}"
+        -serial "chardev:${OPNSENSE_QEMU_SERIAL_DEV_NAME}"
+        -monitor "${OPNSENSE_QEMU_MONITOR}"
+        -netdev "tap,id=nd0,ifname=${OPNSENSE_LAN_DEVICE_NAME},script=no,downscript=no,br=${OPNSENSE_LAN_BRIDGE_NAME}"
+        -device "virtio-net-pci,netdev=nd0"
+        -netdev "user,id=nd1"
+        -device "virtio-net-pci,netdev=nd1"
+        -drive "file=${OPNSENSE_IMAGE_PATH},if=virtio,format=${image_format},cache=none,aio=native,discard=on,detect-zeroes=on"
+        -name "qemu-opnsense"
+    )
+    # -global kvm-pit.lost_tick_policy=discard
+    # -device virtio-balloon-pci,id=balloon0,bus=pcie.0,addr=0x4
+    # -object rng-random,id=objrng0,filename=/dev/urandom
+    # -device virtio-rng-pci,rng=objrng0,id=rng0,bus=pcie.0,addr=0x1c
+    qemu-system-x86_64 "${qemu_args[@]}"
+}
+
+check_opnsense_qemu_running() {
+    if [ -e "${OPNSENSE_PIDFILE}" ]; then
+        pgrep -F "${OPNSENSE_PIDFILE}" > /dev/null
+    else
+        pgrep -f "qemu-opnsense" > /dev/null
+    fi
+}
+
+kill_opnsense() {
+    local pid
+    if [ -e "${OPNSENSE_PIDFILE}" ]; then
+        pid="$(cat "${OPNSENSE_PIDFILE}")"
+    else
+        pid="$(pgrep -f "qemu-opnsense")"
+    fi
+    if [ -n "${pid}" ]; then
+        kill "${pid}"
+    fi
+}
+
+stop_opnsense() {
+    local qemu_monitor_host qemu_monitor_port tries
+    qemu_monitor_host="${OPNSENSE_QEMU_MONITOR#telnet:}"
+    qemu_monitor_host="${qemu_monitor_host%%:*}"
+    qemu_monitor_port="${OPNSENSE_QEMU_MONITOR##*:}"
+    qemu_monitor_port="${qemu_monitor_port%,*}"
+
+    printf 'system_powerdown\n' | nc -q 0 "${qemu_monitor_host}" "${qemu_monitor_port}"
+    tries="${OPNSENSE_GRACETIME}"
+
+    while [ "${tries}" -gt 0 ]; do
+        check_opnsense_qemu_running || return 0
+        tries=$((tries - 1))
+        sleep 1
+    done
+
+    if check_opnsense_qemu_running; then
+        echo "Timeout waiting for opnsense to gracefully shutdown." >&2
+        kill_opnsense
+    fi
+
+    if [ -e "${OPNSENSE_PIDFILE}" ]; then
+        rm -f "${OPNSENSE_PIDFILE}"
+    fi
+}
+
+wait_opnsense_ready() {
+    local newest_log tries
+    tries="${OPNSENSE_READY_TIMEOUT}"
+    while [ "${tries}" -gt 0 ]; do
+        newest_log="$(tail -n 1 "${OPNSENSE_CONSOLE_LOG_FILE}")"
+        if [[ "${newest_log}" == "login: " ]]; then
+            return 0
+        fi
+        echo -n "."
+        sleep 1
+        tries=$((tries - 1))
+    done
+    fatal "Timeout waiting for opnsense to be ready."
+}
+
+start_opnsense_and_wait_ready() {
+    start_opnsense
+    echo -n "Waiting for opnsense to be ready..."
+    wait_opnsense_ready
+    echo "done."
+}
+
+generate_api_key() {
+    local LAN_IPV4_ADDRESS LAN_IPV4_NETMASK HOSTNAME
+    # shellcheck disable=SC1090
+    . "${OPNSENSE_CURRENT_NETWORK_SETTINGS}"
+    "/opt/qemu-opnsense/bin/generate-opnsense-api-key.pl" -H "${LAN_IPV4_ADDRESS}" -f "${OPNSENSE_API_KEY_FILE}"
+}
+
+configure_network() {
+    local bridge_address LAN_IPV4_ADDRESS LAN_IPV4_NETMASK HOSTNAME
+    # shellcheck disable=SC1090
+    . "${OPNSENSE_CURRENT_NETWORK_SETTINGS}"
+
+    bridge_address="$(
+        perl -MNet::Netmask -e '
+            @addrs = Net::Netmask->safe_new(join "/", @ARGV)->enumerate();
+            # reject opnsense_lan_address, network and broadcast addresses
+            @available = grep !/\Q$ARGV[0]\E/, @addrs[1..$#addrs-1];
+            print $available[0];' "${LAN_IPV4_ADDRESS}" "${LAN_IPV4_NETMASK}"
+    )"
+    if [ "${LAN_IPV4_ADDRESS}" = "${bridge_address}" ]; then
+        fatal "Failed to find an available address for the container's bridge."
+    fi
+    if ! ip addr show "${OPNSENSE_LAN_BRIDGE_NAME}" | grep -q "${bridge_address}"; then
+        ip addr add "${bridge_address}/${LAN_IPV4_NETMASK}" dev "${OPNSENSE_LAN_BRIDGE_NAME}"
+    fi
+
+    iptables \
+        -t nat -A PREROUTING -i eth0 -p tcp --dport 443 -j DNAT \
+        --to-destination "${LAN_IPV4_ADDRESS}:443"
+    iptables -t nat -A POSTROUTING -o "${OPNSENSE_LAN_BRIDGE_NAME}" -j MASQUERADE
+}
+
+# Remove br-opnsense-lan's IP address and related iptables rules
+unconfigure_network() {
+    local LAN_IPV4_ADDRESS LAN_IPV4_NETMASK HOSTNAME
+    # shellcheck disable=SC1090
+    . "${OPNSENSE_CURRENT_NETWORK_SETTINGS}"
+
+    ip addr del "${LAN_IPV4_ADDRESS}/${LAN_IPV4_NETMASK}" dev "${OPNSENSE_LAN_BRIDGE_NAME}"
+
+    iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 443 -j DNAT \
+        --to-destination "${LAN_IPV4_ADDRESS}:443"
+    iptables -t nat -D POSTROUTING -o "${OPNSENSE_LAN_BRIDGE_NAME}" -j MASQUERADE
+}

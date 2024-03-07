@@ -1,0 +1,35 @@
+FROM koichirok/docker-opnsense:image-builder as builder
+
+ARG OPNSENSE_VERSION
+
+SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
+WORKDIR /tmp
+
+# hadolint ignore=SC2086,SC1091
+RUN test "$OPNSENSE_VERSION" \
+    && . /builder/functions.bash \
+    && mirror=$(select_fastest_mirror) \
+    && echo "Selected mirror: $mirror" \
+    && img_url="$(build_release_image_url ${OPNSENSE_VERSION} -m "$mirror")" \
+    && raw_image="$(basename "${img_url}")" \
+    && chksum_url="$(build_release_checksum_url ${OPNSENSE_VERSION} -m "$mirror")" \
+    && wget -nv "${img_url}" "${chksum_url}" \
+    && echo -n "Verify download: " \
+    && grep -F "${raw_image}" "$(basename "${chksum_url}")" | sha256sum -c - \
+    && echo -n "Decompress downloaded image..." \
+    && bunzip2 "${raw_image}" \
+    && echo "done." \
+    && echo -n "Convert raw image to qcow2..." \
+    && qcow2_image="${raw_image%.img*}.qcow2" \
+    && qemu-img convert -f raw -O qcow2 "${raw_image%.bz2}" "${qcow2_image}" \
+    && echo "done." \
+    && echo -n "Make qcow2 image sparse..." \
+    && qemu-img convert -c -O qcow2 "${qcow2_image}" "/${qcow2_image}" \
+    && echo "done." \
+    && rm -f /tmp/*
+
+FROM scratch as qemu-image
+
+ARG OPNSENSE_VERSION
+
+COPY --from=builder /OPNsense-*-nano-amd64.qcow2 /
