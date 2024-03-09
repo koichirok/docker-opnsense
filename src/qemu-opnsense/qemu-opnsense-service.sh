@@ -1,4 +1,4 @@
-# shellcheck shell=bash
+#!/bin/bash -e
 
 OPNSENSE_PIDFILE="${OPNSENSE_RUN_STATE_DIR}/qemu.pid"
 OPNSENSE_CONSOLE_LOG_FILE="${OPNSENSE_LOG_DIR}/console.log"
@@ -12,17 +12,25 @@ fatal () {
 }
 
 setup_logging() {
-    if [ -t 0 ]; then
-        # This shell has a tty
-        exec > >(tee -i "${OPNSENSE_CONTROL_LOG_FILE}")
-    else
-        # This shell is not interactive
-        exec > "${OPNSENSE_CONTROL_LOG_FILE}"
+    local -a logfiles
+    logfiles+=("${OPNSENSE_CONTROL_LOG_FILE}")
+
+    if [ "${MONIT_PROCESS_PID}" ]; then
+        {
+            echo "MONIT_PROCESS_PID=${MONIT_PROCESS_PID}" >> "$OPNSENSE_CONTROL_LOG_FILE"
+            ps -ef 
+        } >> "$OPNSENSE_CONTROL_LOG_FILE"
     fi
+    if [ ! -t 0 ]; then
+        # This shell has no tty
+        logfiles+=(" > /dev/null")
+    fi
+    exec > >(tee -i "${logfiles[@]}")
     exec 2>&1
 }
 
-start_opnsense() {
+# start qemu instance
+start() {
     local image_format
     local -a qemu_args
     case "${OPNSENSE_IMAGE_PATH}" in
@@ -55,53 +63,7 @@ start_opnsense() {
     # -device virtio-balloon-pci,id=balloon0,bus=pcie.0,addr=0x4
     # -object rng-random,id=objrng0,filename=/dev/urandom
     # -device virtio-rng-pci,rng=objrng0,id=rng0,bus=pcie.0,addr=0x1c
-    qemu-system-x86_64 "${qemu_args[@]}"
-}
-
-check_opnsense_qemu_running() {
-    if [ -e "${OPNSENSE_PIDFILE}" ]; then
-        pgrep -F "${OPNSENSE_PIDFILE}" > /dev/null
-    else
-        pgrep -f "qemu-opnsense" > /dev/null
-    fi
-}
-
-kill_opnsense() {
-    local pid
-    if [ -e "${OPNSENSE_PIDFILE}" ]; then
-        pid="$(cat "${OPNSENSE_PIDFILE}")"
-    else
-        pid="$(pgrep -f "qemu-opnsense")"
-    fi
-    if [ -n "${pid}" ]; then
-        kill "${pid}"
-    fi
-}
-
-stop_opnsense() {
-    local qemu_monitor_host qemu_monitor_port tries
-    qemu_monitor_host="${OPNSENSE_QEMU_MONITOR#telnet:}"
-    qemu_monitor_host="${qemu_monitor_host%%:*}"
-    qemu_monitor_port="${OPNSENSE_QEMU_MONITOR##*:}"
-    qemu_monitor_port="${qemu_monitor_port%,*}"
-
-    printf 'system_powerdown\n' | nc -q 0 "${qemu_monitor_host}" "${qemu_monitor_port}"
-    tries="${OPNSENSE_GRACETIME}"
-
-    while [ "${tries}" -gt 0 ]; do
-        check_opnsense_qemu_running || return 0
-        tries=$((tries - 1))
-        sleep 1
-    done
-
-    if check_opnsense_qemu_running; then
-        echo "Timeout waiting for opnsense to gracefully shutdown." >&2
-        kill_opnsense
-    fi
-
-    if [ -e "${OPNSENSE_PIDFILE}" ]; then
-        rm -f "${OPNSENSE_PIDFILE}"
-    fi
+    qemu-system-x86_64 "${qemu_args[@]}" 2>&1
 }
 
 wait_opnsense_ready() {
@@ -119,18 +81,104 @@ wait_opnsense_ready() {
     fatal "Timeout waiting for opnsense to be ready."
 }
 
-start_opnsense_and_wait_ready() {
-    start_opnsense
+start_and_wait_ready() {
+    start
     echo -n "Waiting for opnsense to be ready..."
     wait_opnsense_ready
     echo "done."
+    post_opnsense_ready
 }
 
-generate_api_key() {
-    local LAN_IPV4_ADDRESS LAN_IPV4_NETMASK HOSTNAME
+post_opnsense_ready() {
+    local banner_message lan_ipv4_address lan_ipv4_netmask hostname
+    banner_message="$(
+        grep -A 11 -F 'Root file system: /dev/ufs/OPNsense_Nano' "${OPNSENSE_CONSOLE_LOG_FILE}" | sed -n -e '3,$p'
+    )"
+    while IFS=$'\n'$'\r' read -r line; do
+        case "${line}" in
+            "*** "*": "*)
+                hostname="${line#*** }"
+                hostname="${hostname%%:*}"
+                ;;
+            " LAN"*"v4: "*)
+                lan_ipv4_address="${line#*v4: }"
+                lan_ipv4_netmask="${lan_ipv4_address##*/}"
+                lan_ipv4_address="${lan_ipv4_address%/*}"
+                ;;
+        esac
+    done <<< "${banner_message}"
+
+    # store the current network settings
+    cat <<-EOF > "${OPNSENSE_CURRENT_NETWORK_SETTINGS}"
+	HOSTNAME="${hostname}"
+	LAN_IPV4_ADDRESS="${lan_ipv4_address}"
+	LAN_IPV4_NETMASK="${lan_ipv4_netmask}"
+	EOF
+
+    echo -n "Configuring network..." 
+    # use first available address in the OPNsense LAN network as the container's bridge address
+    configure_network "${lan_ipv4_address}" "${lan_ipv4_netmask}"
+    echo done.
+
+    echo -n "Updating /etc/hosts..."
+    echo -e "${lan_ipv4_address}\t${hostname} ${hostname%%.*}" >> /etc/hosts
+    echo done.
+
+    echo -n "Generating API key..."
     # shellcheck disable=SC1090
     . "${OPNSENSE_CURRENT_NETWORK_SETTINGS}"
-    "/opt/qemu-opnsense/bin/generate-opnsense-api-key.pl" -H "${LAN_IPV4_ADDRESS}" -f "${OPNSENSE_API_KEY_FILE}"
+    
+    if [ -e "${OPNSENSE_API_KEY_FILE}" ]; then
+        echo "API key file already exists at ${OPNSENSE_API_KEY_FILE}"
+    elif /opt/qemu-opnsense/generate-opnsense-api-key.pl \
+            -H "${lan_ipv4_address}" -f "${OPNSENSE_API_KEY_FILE}"; then
+        echo done.
+    else
+        echo "Failed to generate API key. Exiting."
+        exit 1
+    fi
+
+    echo "****************************************************************"
+    echo
+    echo OPNsense is now operational with the following configuration:
+    echo "${banner_message}"
+    echo
+    echo Web Interface Access:
+    echo "- Within the container: http://${lan_ipv4_address}/"
+    echo "- Outside the container: https://<container-name>/"
+    echo
+    echo Note: To access from the host, publish port 443 to the host.
+    echo
+    echo API Key:
+    echo "The API key for the root user is stored at: ${OPNSENSE_API_KEY_FILE}"
+    echo
+}
+
+# stop qemu instance
+graceful_stop() {
+    local monitor tries pid rc
+    monitor="$(IFS=':,'; set -- ${OPNSENSE_QEMU_MONITOR}; echo "$2 $3")"
+    pid="$(cat "${OPNSENSE_PIDFILE}")"
+    echo -n "Trying to gracefully stop opnsense..."
+    # shellcheck disable=SC2086
+    printf 'system_powerdown\n' | nc -q 0 ${monitor}
+    timeout "${OPNSENSE_GRACETIME}" tail --pid=$pid -f /dev/null
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        echo done.
+    else
+        echo "failed."
+    fi
+    return $rc
+}
+
+stop() {
+    if ! graceful_stop; then
+        echo -n "Forcing opnsense to stop..."
+        start-stop-daemon --stop --pidfile "${OPNSENSE_PIDFILE}" --retry 5 \
+            --remove-pidfile
+        echo done.
+    fi
 }
 
 configure_network() {
@@ -170,3 +218,22 @@ unconfigure_network() {
         --to-destination "${LAN_IPV4_ADDRESS}:443"
     iptables -t nat -D POSTROUTING -o "${OPNSENSE_LAN_BRIDGE_NAME}" -j MASQUERADE
 }
+
+setup_logging
+
+case "${1}" in
+    start) start_and_wait_ready;;
+    stop)
+        stop
+        # Remove br-opnsense-lan's IP address and related iptables rules
+        unconfigure_network
+        ;;
+    restart)
+        stop
+        start_and_wait_ready
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac

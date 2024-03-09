@@ -8,6 +8,9 @@ RUN apt-get update \
         execline-doc \
         libwww-mechanize-perl \
         libperl-critic-perl \
+        libxml-simple-perl \
+        monit \
+        perl-doc \
         perltidy \
         w3m \
     && apt-get autoremove -y \

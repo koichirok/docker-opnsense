@@ -1,11 +1,13 @@
 #!/usr/bin/expect -f
 
 set serial [lindex $argv 0]
-set release $env(OPNSENSE_VERSION)
 set mirror [lindex $argv 1]
+set release $env(OPNSENSE_VERSION)
+set root_prompt "root@OPNsense:~ # "
 
 proc wait_prompt_and_exec {command} {
-    expect "root@OPNsense:~ # "
+    global root_prompt
+    expect $root_prompt
     send "$command\r"
 }
 
@@ -14,9 +16,8 @@ set timeout 10
 
 expect -re "Terminal ready"
 send "\r"
-puts "Connected to $serial, waiting for login prompt"
-
 set timeout 300
+puts "##### INFO: Waiting for login prompt for 300 seconds"
 expect "login: "
 set timeout
 send "root\r"
@@ -27,13 +28,22 @@ send "8\r"
 
 wait_prompt_and_exec "mkdir -p /var/cache/opnsense-update"
 wait_prompt_and_exec "mount -t tmpfs tmpfs /var/cache/opnsense-update"
-if {variable_exists mirror} {
-    # need escape for sed
-    set mirror [string map {"\\" "\\\\"} $mirror]
-    wait_prompt_and_exec "opnsense-update -m $mirror"
+if {[string length $mirror] > 0} {
+    # remove trailing slash and escape other slashes
+    set mirror [string map {/ \\/} [string trimright $mirror "/"]]
+    wait_prompt_and_exec "opnsense-update -Mm '$mirror'"
 }
-wait_prompt_and_exec "opnsense-update -bkp -r $release"
+set retry false
+wait_prompt_and_exec "opnsense-update -bkp"
 set timeout -1
+expect {
+    -re "pkg-static:.*" { set retry true; exp_continue }
+    $root_prompt
+}
+if { $retry } {
+    send "opnsense-update -Md\r"
+    wait_prompt_and_exec "opnsense-update -bkp"
+}
 wait_prompt_and_exec "opnsense-version -v"
 set timeout 10
 wait_prompt_and_exec "shutdown -p now"

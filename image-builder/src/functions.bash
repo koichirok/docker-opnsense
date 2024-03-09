@@ -7,10 +7,7 @@ select_fastest_mirror() {
     read -r -d '' mirrors < "${__DIR__}/mirrors.txt" || :
 
     # shellcheck disable=SC2086
-    top3="$(netselect -s 3 -t 10 $mirrors 2> /dev/null)"
-
-    # return the fastest mirror only
-    echo "${top3}" | awk 'NR==1{print $2}'
+    netselect -s 1 -t 10 $mirrors 2> /dev/null | awk '{print $2}'
 }
 
 # usage: get_product_series <version>

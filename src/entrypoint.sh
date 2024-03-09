@@ -1,7 +1,34 @@
 #!/bin/bash
 
-set -eu
+set -euo pipefail
 
-/opt/qemu-opnsense/libexec/prepare-env.sh
+# Ensure required directories exist
+mkdir -p "${OPNSENSE_LOG_DIR}"
+mkdir -p "${OPNSENSE_RUN_STATE_DIR}"
+
+# Ensure required devices exist
+if [ ! -e /dev/kvm ]; then
+    mknod /dev/kvm c 10 232
+fi
+if [ ! -e /dev/net/tun ]; then
+    mkdir -p /dev/net
+    mknod /dev/net/tun c 10 200
+fi
+
+# Ensure required network interfaces exist
+for v in ${!OPNSENSE_*}; do
+    case "${v}" in
+        *_BRIDGE_NAME)         cmd="ip link add ${!v} type bridge";;
+        *_LAN_DEV*|*_WAN_DEV*) cmd="ip tuntap add ${!v} mode tap";;
+        *) continue;;
+    esac
+    ip link show "${!v}" > /dev/null 2>&1 || $cmd
+done
+
+# if [ -z "$(ip link show "${OPNSENSE_LAN_DEVICE_NAME}" master "${OPNSENSE_LAN_BRIDGE_NAME}")" ]; then
+#     ip link set "${OPNSENSE_LAN_DEVICE_NAME}" master "${OPNSENSE_LAN_BRIDGE_NAME}"
+# fi
+ip link set "${OPNSENSE_LAN_DEVICE_NAME}" up
+ip link set "${OPNSENSE_LAN_BRIDGE_NAME}" up
 
 exec /usr/bin/monit

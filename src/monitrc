@@ -10,5 +10,5 @@ set httpd port 2812 and
     #}
 
 check process qemu_opnsense with pidfile /var/run/qemu-opnsense/qemu.pid
-  start program = "/opt/qemu-opnsense/sbin/qemu-opnsense-service.sh start" with timeout 300 seconds
-  stop program = "/opt/qemu-opnsense/sbin/qemu-opnsense-service.sh stop" with timeout 300 seconds
+  start program = "/opt/qemu-opnsense/qemu-opnsense-service.sh start" with timeout 300 seconds
+  stop program = "/opt/qemu-opnsense/qemu-opnsense-service.sh stop" with timeout 300 seconds

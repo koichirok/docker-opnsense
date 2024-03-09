@@ -4,7 +4,7 @@ FROM debian:trixie-slim
 RUN apt-get update \
     && apt-get --no-install-recommends -y install \
         bzip2 ca-certificates expect netselect \
-        picocom qemu-system-x86 qemu-utils wget \
+        picocom procps qemu-system-x86 qemu-utils wget \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
