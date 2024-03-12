@@ -28,6 +28,9 @@ Dockerfile: Dockerfile.in
 build: Dockerfile src check-vars
 	@docker build . -t ${REPO}:${VERSION} --build-arg OPNSENSE_VERSION=${VERSION}
 
+push: check-vars
+	@docker push ${REPO}:${VERSION}
+
 lint:
 	@hadolint Dockerfile	
 
