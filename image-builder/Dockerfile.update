@@ -31,15 +31,15 @@ RUN --security=insecure \
     && echo -n "Perfoming update..." \
     && if [ "$WITH_FASTEST_MIRROR" = yes ]; then mirror="$(select_fastest_mirror)"; else mirror=; fi \
     && /builder/perform-update.exp "$serial" "$mirror" \
-    && version=$(grep -A 1 '# opnsense-version' console.log | tail -n 1) \
+    && version=$(grep -A 1 '# opnsense-version' console.log | tail -n 1 | tr -d '\r ') \
     && echo "done." \ 
     && if [ "${version%_*}" != "${OPNSENSE_VERSION}" ]; then \
-        echo "Error: Update failed. Expected version: ${OPNSENSE_VERSION}, Actual version: ${version}"; \
+        echo "Error: Update failed. Expected version: '${OPNSENSE_VERSION}', Actual version: '${version}'"; \
         exit 1; \
     fi \
     && echo "OPNsense Version: ${version}" \
     && echo -n "Waiting for qemu ($pid) to exit..." \
-    && if ! timeout 120 tail --pid=${pid} -f /dev/null; then \
+    && if ! timeout 300 tail --pid=${pid} -f /dev/null; then \
         echo "failed. current processes: "; \
         ps alxww; \
         exit 1; \
@@ -49,7 +49,7 @@ RUN --security=insecure \
     && qemu-img convert -c -O qcow2 "${IMAGE_PATH}" sparse.qcow2 \
     && mv sparse.qcow2 "${IMAGE_PATH}" \
     && echo "done" \
-    && rm ./*.log
+    && rm -f ./*.log
 
 FROM scratch
 
