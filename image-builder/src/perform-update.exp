@@ -19,7 +19,7 @@ send "\r"
 set timeout 300
 puts "##### INFO: Waiting for login prompt for 300 seconds"
 expect "login: "
-set timeout
+set timeout 30
 send "root\r"
 expect "Password:"
 send "opnsense\r"
@@ -47,6 +47,12 @@ if { $retry } {
 wait_prompt_and_exec "opnsense-version -v"
 set timeout 10
 wait_prompt_and_exec "shutdown -p now"
+expect {
+    "Shutdown NOW!" { exp_continue }
+    -r "\\*\\*\\* FINAL System shutdown message from root@.* \\*\\*\\*" { exp_continue }
+    "System going down IMMEDIATELY" { exp_continue }
+    "System shutdown time has arrived"
+}
 
 # send Ctrl+a, Ctrl+x to exit picocom
 send "\x01\x18"
