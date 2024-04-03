@@ -1,6 +1,6 @@
 include mk/common.mk
 
-.PHONY: all build builder image docker-login
+.PHONY: all build builder image docker-login src test-src push lint clean
 
 all: build
 
