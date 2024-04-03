@@ -245,10 +245,6 @@ unconfigure_network() {
     log_action_end_msg $((rc + $?))
 }
 
-if [ "$NO_SETUP_LOGGING" != yes ]; then
-    setup_logging
-fi
-
 case "$1" in
     start) start_and_wait_ready;;
     stop)
