@@ -41,3 +41,26 @@ services:
       - 10443:443
     stop_grace_period: 3m
 ```
+
+## Building Image
+
+If you want to create a Docker image of a version that has not yet been uploaded to Docker Hub, first create a Docker image with the ${VERSION}-image tag.
+
+For example, to create an image of version 24.1.4:
+
+```
+make -C image-builder VERSION=24.1.4
+```
+
+This will create a Docker image which contains a sparsed QCOW2 image of the OPNsense.
+The OPNsense is upgraded to the latest version if the specified version includes a patch version.
+
+Note that builds specifying an older patch release version than the latest version will always fail.
+This is because `opnsense-update` may fail when trying to upgrade to certain patch releases.
+As a workaround, it was decided not to specify a version.
+
+After preparing the ${VERSION}-image Docker image, you can build the docker-opnsense image as follows:
+
+```
+make VERSION=24.1.4
+```
