@@ -31,9 +31,12 @@ for command in curl python3 qemu-img qemu-system-x86_64 expect picocom zstd sha2
     require_command "$command"
 done
 
-if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
-    echo "KVM is required; /dev/kvm is not accessible on this runner." >&2
-    exit 1
+if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+    QEMU_ACCEL_ARGS=(-enable-kvm)
+    echo "Using KVM acceleration."
+else
+    QEMU_ACCEL_ARGS=(-accel tcg,thread=multi)
+    echo "KVM is unavailable; using QEMU TCG software emulation. This will be slower." >&2
 fi
 
 OPNSENSE_SERIES="${OPNSENSE_SERIES:-$(python3 "${ROOT_DIR}/scripts/check-opnsense-version.py" --series-only)}"
@@ -93,7 +96,7 @@ zstd --decompress --force "${WORK_DIR}/opnsense.qcow2.zst" \
 
 qemu-system-x86_64 \
     -nodefaults \
-    -enable-kvm \
+    "${QEMU_ACCEL_ARGS[@]}" \
     -daemonize \
     -m 3072 \
     -smp 2 \

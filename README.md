@@ -50,12 +50,13 @@ services:
 
 The build uses the current release image prepared by
 [`anyvm-org/opnsense-builder`](https://github.com/anyvm-org/opnsense-builder),
-then boots it with QEMU/KVM and applies the available OPNsense updates. The
+then boots it with QEMU and applies the available OPNsense updates. The
 resulting version is read from the guest and used as the Docker image tag; the
 build does not claim to install an arbitrary, pinned patch release.
 
-On Ubuntu 24.04 with Docker, KVM, `curl`, Python 3, QEMU, `expect`, `picocom`,
-and `zstd` installed, build the disk and Docker image with:
+On Ubuntu 24.04 with Docker, `curl`, Python 3, QEMU, `expect`, `picocom`, and
+`zstd` installed, build the disk and Docker image as follows. KVM is optional;
+without it, QEMU uses slower software emulation:
 
 ```sh
 ./scripts/build-opnsense-disk.sh
@@ -83,9 +84,10 @@ Package revisions (such as `_1`) and dependency-only updates do not trigger
 automatic rebuilds. There is no periodic forced rebuild.
 The actual updated guest version must match the checked version before
 publishing; a mismatch fails the build so the next run can check again.
-The build runner must expose a usable `/dev/kvm`; the current
-`anyvm-org/opnsense-builder` release must also contain a disk for the selected
-series.
+The current `anyvm-org/opnsense-builder` release must contain a disk for the
+selected series. The build uses KVM when available and falls back to QEMU TCG
+software emulation otherwise; TCG can make the update take considerably
+longer.
 
 For the first publication, run the workflow manually with `force: true`:
 GHCR can deny registry token requests for a package that does not exist yet.
