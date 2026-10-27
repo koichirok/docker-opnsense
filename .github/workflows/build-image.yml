@@ -1,0 +1,121 @@
+name: Build OPNsense image
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      series:
+        description: "OPNsense release series (empty means latest Production)"
+        required: false
+        type: string
+      force:
+        description: "Rebuild even if the version tag already exists"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: build-opnsense-image
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Perl test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libhtml-tree-perl libwww-mechanize-perl
+
+      - name: Test release version detection
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Test API key generation
+        run: prove -v tests/generate-api-key.t
+
+      - name: Check shell syntax
+        run: bash -n scripts/build-opnsense-disk.sh src/entrypoint.sh.in src/qemu-opnsense-init.sh.in
+
+  check:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      series: ${{ steps.release.outputs.series }}
+      version: ${{ steps.release.outputs.version }}
+      should_build: ${{ steps.release.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check for an unpublished OPNsense version
+        id: release
+        env:
+          OPNSENSE_SERIES: ${{ inputs.series }}
+          FORCE_BUILD: ${{ inputs.force || false }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check-opnsense-version.py --force "$FORCE_BUILD"
+
+  build:
+    needs: check
+    if: github.event_name != 'pull_request' && needs.check.outputs.should_build == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install QEMU build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            ca-certificates curl expect picocom python3 qemu-system-x86 qemu-utils zstd
+
+      - name: Build updated OPNsense disk
+        id: disk
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPNSENSE_SERIES: ${{ needs.check.outputs.series }}
+        run: ./scripts/build-opnsense-disk.sh
+
+      - name: Verify the updated guest version
+        env:
+          EXPECTED_VERSION: ${{ needs.check.outputs.version }}
+          ACTUAL_VERSION: ${{ steps.disk.outputs.version }}
+        run: |
+          if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::Expected OPNsense ${EXPECTED_VERSION}, but the guest has ${ACTUAL_VERSION}. Refusing to publish."
+            exit 1
+          fi
+
+      - name: Build Docker image
+        env:
+          VERSION: ${{ steps.disk.outputs.version }}
+        run: |
+          docker build \
+            --build-arg "OPNSENSE_VERSION=${VERSION}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --tag "ghcr.io/koichirok/docker-opnsense:${VERSION}" \
+            .
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker image
+        env:
+          VERSION: ${{ steps.disk.outputs.version }}
+        run: docker push "ghcr.io/koichirok/docker-opnsense:${VERSION}"

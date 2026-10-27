@@ -1,0 +1,126 @@
+#!/usr/bin/expect -f
+
+set serial [lindex $argv 0]
+if {$serial eq ""} {
+    puts stderr "Usage: update-opnsense.exp <serial-device>"
+    exit 64
+}
+
+set root_prompt "root@OPNsense:~ # "
+set timeout 900
+
+proc run_status {command marker} {
+    global root_prompt
+    send "$command\r"
+    expect $root_prompt
+    send "echo ${marker}:\$status\r"
+    expect -re [format {%s:([0-9]+)} $marker]
+    set status $expect_out(1,string)
+    expect $root_prompt
+    return $status
+}
+
+proc run_checked {command marker} {
+    set status [run_status $command $marker]
+    if {$status != 0} {
+        puts stderr "$command failed with exit status $status"
+    }
+    return $status
+}
+
+spawn picocom $serial
+expect_before {
+    timeout { puts stderr "Timed out waiting for the OPNsense serial console"; exit 1 }
+    eof { puts stderr "OPNsense serial console closed unexpectedly"; exit 1 }
+}
+expect "Terminal ready"
+send "\r"
+expect "login: "
+send "root\r"
+expect "Password:"
+send "opnsense\r"
+expect "Enter an option: "
+send "8\r"
+expect $root_prompt
+
+if {[run_checked "mkdir -p /var/cache/opnsense-update" BUILD_CACHE_DIR] != 0} {
+    puts stderr "Could not create the OPNsense update cache directory"
+    exit 1
+}
+if {[run_checked "mount -t tmpfs tmpfs /var/cache/opnsense-update" BUILD_CACHE_MOUNT] != 0} {
+    puts stderr "Could not mount the temporary OPNsense update cache"
+    exit 1
+}
+
+set timeout 3600
+set update_status [run_checked "opnsense-update -bkp" BUILD_UPDATE]
+if {$update_status != 0} {
+    puts "OPNsense update failed; refreshing repository metadata and retrying once"
+    set update_status [run_checked "opnsense-update -Md" BUILD_UPDATE_METADATA]
+    if {$update_status == 0} {
+        set update_status [run_checked "opnsense-update -bkp" BUILD_UPDATE_RETRY]
+    }
+}
+if {$update_status != 0} {
+    puts stderr "OPNsense update failed with exit status $update_status"
+    exit 1
+}
+
+set timeout 120
+send "echo BUILD_VERSION_BEGIN\r"
+expect $root_prompt
+send "opnsense-version -v\r"
+expect $root_prompt
+send "echo BUILD_VERSION_END\r"
+expect $root_prompt
+
+set cleanup_command {sed -i '' -e 's|<wan>|<lan>|' -e 's|</wan>|</lan>|' -e 's|<ipaddr>dhcp</ipaddr>|<ipaddr>192.168.1.1</ipaddr>|' -e 's|<ssh><enabled>enabled</enabled><permitrootlogin>1</permitrootlogin><passwordauth>1</passwordauth>|<ssh>|' -e 's|<authorizedkeys>[^<]*</authorizedkeys>|<authorizedkeys/>|' /conf/config.xml}
+if {[run_checked $cleanup_command BUILD_CLEANUP_CONFIG] != 0} {
+    puts stderr "Could not restore the container LAN configuration"
+    exit 1
+}
+if {[run_checked "rm -f /conf/config.xml.anyvm-orig /usr/local/etc/ssh/sshd_config.d/anyvm.conf /root/.ssh/authorized_keys" BUILD_CLEANUP_SSH] != 0} {
+    puts stderr "Could not remove CI-only SSH configuration"
+    exit 1
+}
+if {[run_checked "grep -q '<lan>' /conf/config.xml && grep -q '<ipaddr>192.168.1.1</ipaddr>' /conf/config.xml" BUILD_VERIFY_LAN] != 0} {
+    puts stderr "The OPNsense LAN configuration was not restored"
+    exit 1
+}
+if {[run_status "grep -q '<wan>' /conf/config.xml" BUILD_VERIFY_NO_WAN] != 1} {
+    puts stderr "The CI WAN interface configuration remains in the OPNsense image"
+    exit 1
+}
+set verify_keys {grep -q '<authorizedkeys>[^<]*</authorizedkeys>' /conf/config.xml}
+if {[run_status $verify_keys BUILD_VERIFY_NO_KEYS] != 1} {
+    puts stderr "A CI-only SSH key remains in the OPNsense configuration"
+    exit 1
+}
+if {[run_status "grep -q '<ssh><enabled>enabled</enabled>' /conf/config.xml" BUILD_VERIFY_SSH_DISABLED] != 1} {
+    puts stderr "CI-only SSH access remains enabled in the OPNsense configuration"
+    exit 1
+}
+if {[run_status "ls /usr/local/etc/ssh/sshd_config.d/anyvm.conf" BUILD_VERIFY_NO_SSH_DROPIN] != 1} {
+    puts stderr "CI-only SSH configuration remains in the OPNsense image"
+    exit 1
+}
+
+set timeout 3600
+# Leave headroom for guest services instead of filling the root filesystem.
+set zero_free_space {sh -c 'set -eu; f=/.opnsense-build-zero; if test -e "$f"; then echo "Zero-fill file already exists" >&2; exit 1; fi; trap "rm -f /.opnsense-build-zero" EXIT; sync; free=$(df -k / | tail -1 | awk "{if (\$4 ~ /^[0-9]+$/) print \$4; else exit 1}"); count=$((free / 1024 - 64)); test "$count" -gt 0; dd if=/dev/zero of="$f" bs=1m count="$count"; sync; rm "$f"; sync'}
+if {[run_checked $zero_free_space BUILD_ZERO_FREE_SPACE] != 0} {
+    puts stderr "Could not zero the OPNsense root filesystem free space"
+    exit 1
+}
+
+set timeout 300
+send "shutdown -p now\r"
+expect {
+    "Shutdown NOW!" { exp_continue }
+    -re "\\*\\*\\* FINAL System shutdown message from root@.* \\*\\*\\*" { exp_continue }
+    "System going down IMMEDIATELY" { exp_continue }
+    "System shutdown time has arrived"
+}
+send "\x01\x18"
+expect_before
+expect eof

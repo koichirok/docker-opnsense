@@ -75,12 +75,15 @@ wait_opnsense_ready() {
         tries=$((tries - 1))
     done
     log_action_end_msg 1 timeout
+    return 1
 }
 
 start_and_wait_ready() {
     start
-    wait_opnsense_ready
-    post_opnsense_ready
+    if ! wait_opnsense_ready || ! post_opnsense_ready; then
+        stop
+        return 1
+    fi
 }
 
 post_opnsense_ready() {
@@ -136,8 +139,12 @@ post_opnsense_ready() {
         log_action_msg "Skip generating the API key for the root user: (already exists)"
     else
         log_action_begin_msg "Generating the API key for the root user"
-        @API_KEY_GENERATOR_PATH@ -H "$lan_addr4" -f "$OPNSENSE_API_KEY_FILE" -q
-        log_action_end_msg $?
+        if /opt/qemu-opnsense/generate-api-key -H "$lan_addr4" -f "$OPNSENSE_API_KEY_FILE" -q; then
+            log_action_end_msg 0
+        else
+            log_action_end_msg 1 "API key generation failed"
+            return 1
+        fi
     fi
 
     printf '*%.0s' {1..70}; echo

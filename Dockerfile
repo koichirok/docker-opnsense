@@ -1,6 +1,3 @@
-ARG OPNSENSE_VERSION
-FROM koichirok/docker-opnsense:${OPNSENSE_VERSION}-image AS opnsense-image
-
 FROM debian:trixie-slim
 
 ARG DEBCONF_NOWARNINGS="yes"
@@ -15,16 +12,15 @@ RUN apt-get update \
         iptables \
         libwww-mechanize-perl \
         libnet-netmask-perl \
-        monit \
         netcat-openbsd \
         picocom \
         procps \
         qemu-system-x86 \
-        qemu-utils \
     && apt-get clean \
+    && rm -f /usr/bin/qemu-system-i386 /usr/bin/qemu-system-x86_64-microvm \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-ARG OPNSENSE_VERSION="24.1"
+ARG OPNSENSE_VERSION
 ARG OPNSENSE_IMAGE_DIR="/var/lib/qemu"
 ARG OPNSENSE_LOG_DIR="/var/log/qemu-opnsense"
 ARG OPNSENSE_RUN_STATE_DIR="/var/run/qemu-opnsense"
@@ -35,10 +31,11 @@ ARG OPNSENSE_PID_FILENAME="qemu.pid"
 ARG OPNSENSE_QEMU_SERIAL_DEV_NAME="ptyS0"
 ARG OPNSENSE_READY_TIMEOUT=300
 ARG OPNSENSE_GRACETIME=180
+# hadolint ignore=DL3064
 ARG OPNSENSE_API_KEY_FILE="/root/.opnsense_api_key.json"
 
 ENV OPNSENSE_VERSION=${OPNSENSE_VERSION}
-ENV OPNSENSE_IMAGE=OPNsense-${OPNSENSE_VERSION}-nano-amd64.qcow2
+ENV OPNSENSE_IMAGE=opnsense.qcow2
 ENV OPNSENSE_IMAGE_PATH=${OPNSENSE_IMAGE_DIR}/${OPNSENSE_IMAGE}
 ENV OPNSENSE_LOG_DIR=${OPNSENSE_LOG_DIR}
 ENV OPNSENSE_RUN_STATE_DIR=${OPNSENSE_RUN_STATE_DIR}
@@ -49,15 +46,14 @@ ENV OPNSENSE_PID_FILENAME=${OPNSENSE_PID_FILENAME}
 ENV OPNSENSE_QEMU_SERIAL_DEV_NAME=${OPNSENSE_QEMU_SERIAL_DEV_NAME}
 ENV OPNSENSE_READY_TIMEOUT=${OPNSENSE_READY_TIMEOUT}
 ENV OPNSENSE_GRACETIME=${OPNSENSE_GRACETIME}
+# hadolint ignore=DL3064
 ENV OPNSENSE_API_KEY_FILE=${OPNSENSE_API_KEY_FILE}
 
 RUN mkdir -p "${OPNSENSE_IMAGE_DIR}" "${OPNSENSE_LOG_DIR}" 
 
-COPY --from=opnsense-image \
-    "/${OPNSENSE_IMAGE}" "${OPNSENSE_IMAGE_PATH}"
+COPY build/opnsense.qcow2 "${OPNSENSE_IMAGE_PATH}"
+COPY --chmod=0755 src/qemu-opnsense-init.sh.in /etc/init.d/qemu-opnsense
+COPY --chmod=0700 src/entrypoint.sh.in /opt/qemu-opnsense/entrypoint.sh
+COPY --chmod=0755 src/generate-opnsense-api-key.pl /opt/qemu-opnsense/generate-api-key
 
-COPY --chmod=0755 src/qemu-opnsense-init.sh @INIT_SCRIPT_PATH@
-COPY --chmod=0700 src/entrypoint.sh @ENTRYPOINT_PATH@
-COPY --chmod=0755 src/generate-opnsense-api-key.pl @API_KEY_GENERATOR_PATH@
-
-ENTRYPOINT [ "@ENTRYPOINT_PATH@" ]
+ENTRYPOINT ["/opt/qemu-opnsense/entrypoint.sh"]
