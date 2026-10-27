@@ -1,117 +1,95 @@
 # docker-opnsense
 
-This is a Docker image for running OPNsense in a container using KVM.
-It's intended for testing purposes and not designed for use in a production environment.
+Run OPNsense in a Docker container using QEMU/KVM. This image is intended for
+testing and evaluation, not production use. It requires elevated networking
+permissions and exposes a virtual firewall; do not expose it to untrusted
+networks.
 
-## Usage
+## Run a published image
 
-To run this image, following options are required:
+Choose a versioned tag published on
+[GitHub Container Registry](https://github.com/koichirok/docker-opnsense/pkgs/container/docker-opnsense).
+For Docker Compose, create a `.env` file next to `docker-compose.yml`:
 
-* `--cap_add NET_ADMIN`
-* one of the following:
-    * `--device /dev/kvm`
-    * `--device-cgroup_rule "c 10:232 rwm"`
+```dotenv
+OPNSENSE_VERSION=26.7.7
+```
 
-Set `OPNSENSE_VERSION` to a versioned tag published on GitHub Container Registry
-(GHCR).
-
-## Example Usage
-
-Via `docker run`:
+Replace the example with an available tag, then start the container:
 
 ```sh
-export OPNSENSE_VERSION=26.7.7 # Replace with an available GHCR tag.
-
-docker run --rm -it \
-    --device /dev/kvm \
-    --cap_add NET_ADMIN \
-    -p 10443:443 \
-    "ghcr.io/koichirok/docker-opnsense:${OPNSENSE_VERSION}"
+docker compose up -d
 ```
 
-Via `docker-compose.yml`:
+The included [docker-compose.yml](./docker-compose.yml) publishes the OPNsense
+web interface on host port `10443`. It grants `NET_ADMIN` and permits access to
+the KVM device. If preferred, pass `/dev/kvm` explicitly using the `devices`
+entry instead of `device_cgroup_rules` (see the comments in the Compose file).
+The host must have working KVM support; the container also needs enough memory
+for the guest (2 GiB by default).
 
-```yaml
-services:
-  opnsense:
-    image: ghcr.io/koichirok/docker-opnsense:${OPNSENSE_VERSION}
-    devices:
-      - /dev/kvm
-    # device_cgroup_rules:
-    #   - 'c 10:232 rwm'
-    cap_add:
-      - NET_ADMIN
-    ports:
-      - 10443:443
-    stop_grace_period: 3m
+For `docker run`, the equivalent basic setup is:
+
+```sh
+docker run -it \
+  --name opnsense \
+  --device /dev/kvm \
+  --cap-add NET_ADMIN \
+  -p 10443:443 \
+  ghcr.io/koichirok/docker-opnsense:26.7.7
 ```
 
-## Building Image
+Stop and start this container without removing it to preserve guest state:
 
-The build uses the current release image prepared by
-[`anyvm-org/opnsense-builder`](https://github.com/anyvm-org/opnsense-builder),
-then boots it with QEMU and applies the available OPNsense updates. The
-resulting version is read from the guest and used as the Docker image tag; the
-build does not claim to install an arbitrary, pinned patch release.
+```sh
+docker stop opnsense
+docker start opnsense
+```
 
-On Ubuntu 24.04 with Docker, `curl`, Python 3, QEMU, `expect`, `picocom`, and
-`zstd` installed, build the disk and Docker image as follows. KVM is optional;
-without it, QEMU uses slower software emulation:
+When startup completes, open <https://localhost:10443/>. The web interface
+uses HTTPS and may show a browser warning for its certificate. The default
+login is `root` / `opnsense`; change the password after signing in. The
+container logs show the guest's LAN address and startup status:
+
+```sh
+docker compose logs -f opnsense
+```
+
+At startup, the container generates an API key for the root user and stores a
+JSON object containing `key` and `secret` at
+`/root/.opnsense_api_key.json` inside the container (mode `0600`). Treat this
+file as a credential. To copy it to the host, use `docker cp` with the running
+container name and store the copy securely. For example, with Compose:
+
+```sh
+docker cp "$(docker compose ps -q opnsense)":/root/.opnsense_api_key.json ./opnsense-api-key.json
+```
+
+The virtual disk is stored in the container at `/var/lib/qemu/opnsense.qcow2`.
+Stopping and restarting the same container preserves its state; removing and
+recreating the container (for example, with `docker compose down`) does not.
+Back up the disk before replacing the container if you need to keep guest
+changes. The API key file is also in the container's writable layer and is
+generated again if it is absent.
+
+## Build locally
+
+To build an image yourself, use Ubuntu 24.04 with Docker, `curl`, Python 3,
+QEMU, `expect`, `picocom`, and `zstd` installed. KVM is optional for building;
+without it, QEMU uses slower software emulation.
 
 ```sh
 ./scripts/build-opnsense-disk.sh
 VERSION="$(cat build/opnsense.version)"
 docker build \
   --build-arg "OPNSENSE_VERSION=${VERSION}" \
-  --tag "ghcr.io/koichirok/docker-opnsense:${VERSION}" .
+  --tag "docker-opnsense:${VERSION}" .
 ```
 
-The scheduled GitHub Actions workflow checks weekly for a new Production
-release. A lightweight `check` job reads the stable `opnsense` package version
-from the official package mirror (discovering the FreeBSD amd64 ABI for the
-selected series), then checks for that version's manifest on GHCR. Only a
-missing manifest (HTTP 404 after successful registry authentication) triggers
-a build; network, authentication, and parsing
-errors fail the check instead of being treated as "no update".
-The build pushes the versioned image to GHCR using the automatically provided
-`GITHUB_TOKEN`; no Docker Hub credentials or personal access token are needed.
-The check job has `packages: read` permission and the build job has
-`packages: write` permission. The `workflow_dispatch` trigger can
-be used to run it manually; leave the series input empty for the latest
-Production series. Enable `force` to skip the registry lookup and rebuild an
-already published version.
-Package revisions (such as `_1`) and dependency-only updates do not trigger
-automatic rebuilds. There is no periodic forced rebuild.
-The actual updated guest version must match the checked version before
-publishing; a mismatch fails the build so the next run can check again.
-The current `anyvm-org/opnsense-builder` release must contain a disk for the
-selected series. The build uses KVM when available and falls back to QEMU TCG
-software emulation otherwise; TCG can make the update take considerably
-longer.
-
-For the first publication, run the workflow manually with `force: true`:
-GHCR can deny registry token requests for a package that does not exist yet.
-After the push, change the package visibility to **Public** in its GitHub
-package settings so users can pull without logging in. The workflow links the
-package to this repository. If a package with this name already exists,
-ensure this repository has Actions access to it before running the workflow.
-Outside Actions, the release check can access a public package anonymously;
-for authenticated checks, set `GH_TOKEN` and `GITHUB_ACTOR` to credentials
-with package read access.
-
-The downloaded VM image is the CI-ready qcow2 release from the upstream
-builder. Before using it in the container, the build applies OPNsense updates,
-restores the LAN configuration expected by this project, and removes the
-builder's CI-only SSH key/configuration.
-
-Before shutdown, the build zeroes root filesystem free space, leaving 64 MiB
-of headroom for guest services, then converts the stopped disk to a compressed,
-sparse qcow2. QEMU unmaps zero writes during this step to avoid allocating the
-full virtual disk on the build host. This is compaction, not secure erasure.
-The runtime image excludes build-only disk tools and unused QEMU executables.
-
-At startup, the container creates a root API key using the current user
-management API (or the legacy user manager on older releases). Credentials
-are saved as a JSON object containing `key` and `secret`, with file mode
-`0600`, at `OPNSENSE_API_KEY_FILE`. Failure to generate the key fails startup
-instead of reporting the container as ready.
+The build starts from the current release image prepared by
+[`anyvm-org/opnsense-builder`](https://github.com/anyvm-org/opnsense-builder),
+applies available OPNsense updates, and uses the resulting guest version as
+the image tag. It does not install an arbitrary pinned patch release. The
+build also restores this project's expected LAN configuration and removes
+builder-only SSH configuration. For details about publishing images and
+maintaining the automated build, see [CONTRIBUTING.md](./CONTRIBUTING.md).
