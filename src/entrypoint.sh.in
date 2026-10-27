@@ -33,10 +33,10 @@ ip link set "${OPNSENSE_LAN_BRIDGE_NAME}" up
 
 graceful_stop() {
     export SKIP_NETWORK_UNCONFIG=yes
-    @INIT_SCRIPT_PATH@ stop
+    /etc/init.d/qemu-opnsense stop
 }
 
-@INIT_SCRIPT_PATH@ start
+/etc/init.d/qemu-opnsense start
 trap graceful_stop SIGTERM SIGINT
 
 pid=$(cat "$OPNSENSE_RUN_STATE_DIR/qemu.pid")

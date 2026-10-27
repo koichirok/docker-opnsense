@@ -1,0 +1,10 @@
+**
+!Dockerfile
+!src/
+src/*
+!src/entrypoint.sh.in
+!src/qemu-opnsense-init.sh.in
+!src/generate-opnsense-api-key.pl
+!build/
+build/*
+!build/opnsense.qcow2

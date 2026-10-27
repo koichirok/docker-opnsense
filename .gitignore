@@ -1,4 +1,6 @@
-Dockerfile
+docker-compose.override.yml
 src/entrypoint.sh
 src/qemu-opnsense-init.sh
-docker-compose.override.yml
+build/
+__pycache__/
+*.py[cod]

@@ -1,0 +1,19 @@
+{
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "2.17.0",
+      "resolved": "ghcr.io/devcontainers/features/docker-in-docker@sha256:25b9f05705ffba7dbe503230ac76081419306f8c8bc88e0ce78c4ecd99a0c78c",
+      "integrity": "sha256:25b9f05705ffba7dbe503230ac76081419306f8c8bc88e0ce78c4ecd99a0c78c"
+    },
+    "ghcr.io/dhoeric/features/hadolint:1": {
+      "version": "1.0.0",
+      "resolved": "ghcr.io/dhoeric/features/hadolint@sha256:993e7e6f14b7f53aafefb081eb8396ea08f3d48aebb23c91fbaa10651ca0a835",
+      "integrity": "sha256:993e7e6f14b7f53aafefb081eb8396ea08f3d48aebb23c91fbaa10651ca0a835"
+    },
+    "ghcr.io/lukewiwa/features/shellcheck:0": {
+      "version": "0.2.3",
+      "resolved": "ghcr.io/lukewiwa/features/shellcheck@sha256:9d61a060404fb127ae0c3aea3adbf85869ba575ab8e612f168c82c48ef0c502e",
+      "integrity": "sha256:9d61a060404fb127ae0c3aea3adbf85869ba575ab8e612f168c82c48ef0c502e"
+    }
+  }
+}

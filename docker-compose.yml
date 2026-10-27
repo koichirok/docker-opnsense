@@ -1,7 +1,6 @@
-version: "3"
 services:
   opnsense:
-    image: koichirok/docker-opnsense:24.1.3
+    image: ghcr.io/koichirok/docker-opnsense:${OPNSENSE_VERSION:?Set OPNSENSE_VERSION to a published GHCR tag}
     #devices:
     #  - /dev/kvm
     #  - /dev/net/tun

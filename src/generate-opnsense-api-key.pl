@@ -5,6 +5,10 @@ use warnings;
 use WWW::Mechanize ();
 use Getopt::Std;
 use HTML::TreeBuilder;
+use JSON::PP qw(decode_json encode_json);
+use File::Temp qw(tempfile);
+use File::Basename qw(dirname);
+use URI::Escape qw(uri_escape_utf8);
 
 my %opts = (
     H => "192.168.1.1",                     # OPNsense IP address
@@ -32,6 +36,7 @@ sub trim_and_unquote {
 sub open_system_usermanager {
     my $mech = shift;
     $mech->get("https://$opts{H}/");
+    $mech->success() || die "Failed to open OPNsense login page\n";
 
     if ($mech->title() eq "Login | OPNsense") {
         $mech->submit_form(
@@ -42,10 +47,22 @@ sub open_system_usermanager {
             },
             button => 'login',
         );
+        $mech->success() || die "OPNsense login request failed\n";
     }
+    $mech->title() ne "Login | OPNsense"
+      || die "OPNsense login failed\n";
+
+    $mech->get("https://$opts{H}/ui/auth/user/");
+    if ($mech->status() != 404) {
+        $mech->success() || die "Failed to open current user management page\n";
+        return 1;
+    }
+
     $mech->get("https://$opts{H}/system_usermanager.php");
+    $mech->success() || die "Failed to open legacy user management page\n";
     $mech->title() =~ /^Users \| Access \| System \| /
       || die "Failed to open \"System: Access: Users\" page: login failed\n";
+    return 0;
 }
 
 sub open_system_usermanager_edit_page_for_user {
@@ -68,51 +85,78 @@ sub open_system_usermanager_edit_page_for_user {
         next if (trim($cells[0]->as_trimmed_text()) ne $user);
 
         $mech->get($link->attr('href'));
+        $mech->success() || die "Failed to open user edit page\n";
         return;
     }
     die "Failed to find link to edit user $user\n";
 }
 
-sub generate_api_key {
+sub set_csrf_header {
     my $mech = shift;
-    $mech->uri() =~ /\buserid=(\d+)/ || die "Failed to find userid in URL\n";
-    my $userid = $1;
 
     my $tree = HTML::TreeBuilder->new_from_content($mech->content());
 
     my @scripts = map { my @c = $_->content_list(); @c }
       $tree->look_down(_tag => 'script', src => undef);
 
-    # Generating an API key requires simulating an XHR request, as the key is
-    # created using JavaScript. OPNsense includes a CSRF token in the
-    # X-CSRFToken header with the XHR, which we need to collect and set in the
-    # $mech object. As this is the final request in this script, there's no
-    # need to reset the headers afterwards.
     for my $script (@scripts) {
-        if (ref $script ne '') {
-            print STDERR "WARN: Unexpected script content: $script\n";
-            next;
-        }
-        if ($script =~ /setRequestHeader\((.+?),(.+?)\)/mg) {
+        next if ref $script;
+        while ($script =~ /setRequestHeader\((.+?),(.+?)\)/mg) {
             my ($name, $value) =
               (trim_and_unquote($1), trim_and_unquote($2));
+            next unless $name eq 'X-CSRFToken' && length $value;
             $mech->add_header($name, $value);
+            return;
         }
     }
-    $mech->post($mech->uri(), {act => 'newApiKey', userid => $userid});
-    $mech->save_content($opts{f});
+    die "Failed to find the OPNsense CSRF token\n";
+}
+
+sub generate_api_key {
+    my ($mech, $modern) = @_;
+    set_csrf_header($mech);
+    if ($modern) {
+        my $username = uri_escape_utf8($opts{u});
+        $mech->post("https://$opts{H}/api/auth/user/add_api_key/$username", {});
+    } else {
+        $mech->uri() =~ /\buserid=(\d+)/ || die "Failed to find userid in URL\n";
+        $mech->post($mech->uri(), {act => 'newApiKey', userid => $1});
+    }
+    $mech->success() || die "API key generation HTTP request failed\n";
+
+    my $credentials = decode_json($mech->content());
+    ref($credentials) eq 'HASH'
+      || die "API key generation returned an invalid JSON object\n";
+    if ($modern) {
+        ($credentials->{result} // '') eq 'ok'
+          || die "OPNsense rejected API key generation\n";
+    }
+    for my $field (qw(key secret)) {
+        defined($credentials->{$field}) && !ref($credentials->{$field})
+          && length($credentials->{$field})
+          || die "API key generation returned no $field\n";
+    }
+
+    my ($file, $temporary) = tempfile('.opnsense-api-key-XXXXXX',
+        DIR => dirname($opts{f}), UNLINK => 1);
+    print {$file} encode_json({
+        key => $credentials->{key}, secret => $credentials->{secret},
+    }) or die "Failed to write API credentials: $!\n";
+    close $file or die "Failed to close API credentials: $!\n";
+    rename $temporary, $opts{f} or die "Failed to save API credentials: $!\n";
     print "API key saved to $opts{f}\n" unless $opts{q};
 }
 
 sub main {
     my $mech = WWW::Mechanize->new(
+        autocheck => 0,
         ssl_opts => {SSL_verify_mode => 0, verify_hostname => 0},);
-    open_system_usermanager($mech);
-    open_system_usermanager_edit_page_for_user($mech, $opts{u});
-    generate_api_key($mech);
+    my $modern = open_system_usermanager($mech);
+    open_system_usermanager_edit_page_for_user($mech, $opts{u}) unless $modern;
+    generate_api_key($mech, $modern);
     exit 0;
 }
 
-main();
+main() unless caller;
 
 1;
