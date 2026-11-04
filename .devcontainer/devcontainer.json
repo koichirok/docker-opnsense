@@ -9,9 +9,10 @@
 	},
 
 	"features": {
-		"ghcr.io/devcontainers/features/docker-in-docker:2": { "moby": false },
+		"ghcr.io/devcontainers/features/docker-in-docker:4": { "moby": false },
 		"ghcr.io/dhoeric/features/hadolint:1": {},
-		"ghcr.io/lukewiwa/features/shellcheck:0": {}
+		"ghcr.io/lukewiwa/features/shellcheck:0": {},
+		"ghcr.io/devcontainers/features/github-cli:1": {}
 	},
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
