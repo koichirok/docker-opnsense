@@ -52,8 +52,8 @@ ENV OPNSENSE_API_KEY_FILE=${OPNSENSE_API_KEY_FILE}
 RUN mkdir -p "${OPNSENSE_IMAGE_DIR}" "${OPNSENSE_LOG_DIR}" 
 
 COPY build/opnsense.qcow2 "${OPNSENSE_IMAGE_PATH}"
-COPY --chmod=0755 src/qemu-opnsense-init.sh.in /etc/init.d/qemu-opnsense
-COPY --chmod=0700 src/entrypoint.sh.in /opt/qemu-opnsense/entrypoint.sh
+COPY --chmod=0755 src/qemu-opnsense-init.sh /etc/init.d/qemu-opnsense
+COPY --chmod=0700 src/entrypoint.sh /opt/qemu-opnsense/entrypoint.sh
 COPY --chmod=0755 src/generate-opnsense-api-key.pl /opt/qemu-opnsense/generate-api-key
 
 ENTRYPOINT ["/opt/qemu-opnsense/entrypoint.sh"]

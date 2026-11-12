@@ -42,7 +42,7 @@ jobs:
         run: prove -v tests/generate-api-key.t
 
       - name: Check shell syntax
-        run: bash -n scripts/build-opnsense-disk.sh src/entrypoint.sh.in src/qemu-opnsense-init.sh.in
+        run: bash -n scripts/build-opnsense-disk.sh src/entrypoint.sh src/qemu-opnsense-init.sh
 
   check:
     if: github.event_name != 'pull_request'
