@@ -78,6 +78,10 @@ To build an image yourself, use Ubuntu 24.04 with Docker, `curl`, Python 3,
 QEMU, `expect`, `picocom`, and `zstd` installed. KVM is optional for building;
 without it, QEMU uses slower software emulation.
 
+Alternatively, reopen this repository in its Dev Container, which includes
+the disk-build dependencies and Docker via the Docker-in-Docker feature.
+The Dev Container can build without access to `/dev/kvm` using QEMU TCG.
+
 ```sh
 ./scripts/build-opnsense-disk.sh
 VERSION="$(cat build/opnsense.version)"

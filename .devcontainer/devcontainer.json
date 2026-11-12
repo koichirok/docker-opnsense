@@ -27,7 +27,6 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"ms-azuretools.vscode-docker",
 				"exiasr.hadolint",
 				"timonwong.shellcheck",
 				"bscan.perlnavigator",
