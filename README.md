@@ -1,9 +1,9 @@
 # docker-opnsense
 
-Run OPNsense in a Docker container using QEMU/KVM. This image is intended for
-testing and evaluation, not production use. It requires elevated networking
-permissions and exposes a virtual firewall; do not expose it to untrusted
-networks.
+Run OPNsense in a Docker container using QEMU, with optional KVM acceleration.
+This image is intended for testing and evaluation, not production use. It
+requires elevated networking permissions and exposes a virtual firewall; do
+not expose it to untrusted networks.
 
 ## Run a published image
 
@@ -23,21 +23,21 @@ docker compose up -d
 
 The included [docker-compose.yml](./docker-compose.yml) publishes the OPNsense
 web interface on host port `10443`. It grants `NET_ADMIN` and permits access to
-the KVM device. If preferred, pass `/dev/kvm` explicitly using the `devices`
-entry instead of `device_cgroup_rules` (see the comments in the Compose file).
-The host must have working KVM support; the container also needs enough memory
-for the guest (2 GiB by default).
+the KVM device when available. QEMU uses KVM when accessible and falls back to
+TCG software emulation otherwise; without KVM, the guest will run much slower.
+The container needs enough memory for the guest (2 GiB by default).
 
 For `docker run`, the equivalent basic setup is:
 
 ```sh
 docker run -it \
   --name opnsense \
-  --device /dev/kvm \
   --cap-add NET_ADMIN \
   -p 10443:443 \
   ghcr.io/koichirok/docker-opnsense:26.7.7
 ```
+
+To enable KVM acceleration with `docker run`, add `--device /dev/kvm`.
 
 Stop and start this container without removing it to preserve guest state:
 

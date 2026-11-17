@@ -20,20 +20,33 @@ fi
 # start qemu instance
 start() {
     local image_format
+    local -a cpu_args
+    local -a accelerator_args
     local -a qemu_args
     case "$OPNSENSE_IMAGE_PATH" in
         *.qcow2) image_format=qcow2;;
         *)       image_format=raw;;
     esac
+
+    if (exec 3<>/dev/kvm) 2>/dev/null; then
+        cpu_args=(-cpu "host,kvm=on,l3-cache=on,migratable=no")
+        accelerator_args=(-enable-kvm)
+        log_action_msg "Using KVM acceleration with the host CPU."
+    else
+        cpu_args=(-cpu max)
+        accelerator_args=(-accel 'tcg,thread=multi')
+        log_action_msg "KVM is unavailable; using slower QEMU TCG software emulation."
+    fi
+
     qemu_args+=(
-        -nodefaults -enable-kvm
+        -nodefaults "${accelerator_args[@]}"
         -pidfile "$PIDFILE"
         -daemonize
-        -cpu "host,kvm=on,l3-cache=on,migratable=no"
+        "${cpu_args[@]}"
         -smp "1,sockets=1,dies=1,cores=1,threads=1"
         -m "$OPNSENSE_RAM_SIZE"
         # Note: q35 chipset is supported by OPNsense >= 21.x
-        -machine "type=q35,graphics=off,vmport=off,dump-guest-core=off,hpet=off,accel=kvm"
+        -machine "type=q35,graphics=off,vmport=off,dump-guest-core=off,hpet=off"
 
         # Allow to connect to the serial console via pty device
         -nographic
